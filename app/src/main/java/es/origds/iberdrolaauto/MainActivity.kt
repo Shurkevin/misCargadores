@@ -173,6 +173,15 @@ class MainActivity : AppCompatActivity() {
                 reorderAction.text = "Reordenar cargadores"
                 visibility = View.GONE
                 status.text = "Orden guardado."
+                status.setTextColor(color(R.color.iberdrola_muted))
+                status.background = rounded(Color.parseColor("#ECEFED"), 16)
+                status.postDelayed({
+                    if (status.text == "Orden guardado.") {
+                        status.text = "${points.size} cargadores favoritos."
+                        status.setTextColor(color(R.color.iberdrola_green_dark))
+                        status.background = rounded(color(R.color.iberdrola_mint), 16)
+                    }
+                }, 3_000)
                 renderChargePoints()
             }
         }
