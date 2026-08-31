@@ -7,6 +7,7 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
+import android.view.animation.DecelerateInterpolator
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -41,6 +42,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var chargerList: LinearLayout
     private lateinit var reorderAction: Button
     private lateinit var renameAction: Button
+    private lateinit var finishReorderAction: TextView
     private lateinit var settingsDrawer: DrawerLayout
     private lateinit var orderStore: ChargePointOrderStore
     private lateinit var nameStore: ChargePointNameStore
@@ -88,6 +90,7 @@ class MainActivity : AppCompatActivity() {
         settingsDrawer = this
         setBackgroundColor(color(R.color.iberdrola_background))
         val drawer = this
+        addView(FrameLayout(context).apply {
         addView(SwipeRefreshLayout(context).apply {
             swipeRefresh = this
             setColorSchemeResources(R.color.iberdrola_green, R.color.iberdrola_success)
@@ -155,6 +158,28 @@ class MainActivity : AppCompatActivity() {
                 addView(action, matchWidth().apply { topMargin = dp(12) })
                 })
             })
+        }, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        finishReorderAction = TextView(context).apply {
+            text = "✓"
+            textSize = 30f
+            gravity = Gravity.CENTER
+            contentDescription = "Terminar de reordenar"
+            setTextColor(Color.WHITE)
+            background = rounded(color(R.color.iberdrola_green), 100)
+            elevation = dp(8).toFloat()
+            visibility = View.GONE
+            setOnClickListener {
+                reordering = false
+                reorderAction.text = "Reordenar cargadores"
+                visibility = View.GONE
+                status.text = "Orden guardado."
+                renderChargePoints()
+            }
+        }
+        addView(finishReorderAction, FrameLayout.LayoutParams(dp(64), dp(64), Gravity.END or Gravity.BOTTOM).apply {
+            rightMargin = dp(24)
+            bottomMargin = dp(28)
+        })
         }, DrawerLayout.LayoutParams(DrawerLayout.LayoutParams.MATCH_PARENT, DrawerLayout.LayoutParams.MATCH_PARENT))
         addView(settingsPanel(), DrawerLayout.LayoutParams(dp(320), DrawerLayout.LayoutParams.MATCH_PARENT, GravityCompat.START))
     }
@@ -191,6 +216,7 @@ class MainActivity : AppCompatActivity() {
                     if (reordering) renaming = false
                     text = if (reordering) "Terminar de ordenar" else "Reordenar cargadores"
                     renameAction.text = "Personalizar nombres"
+                    finishReorderAction.visibility = if (reordering) View.VISIBLE else View.GONE
                     settingsDrawer.closeDrawer(GravityCompat.START)
                     renderChargePoints()
                 }
@@ -202,7 +228,10 @@ class MainActivity : AppCompatActivity() {
                 styleSecondaryButton(this)
                 setOnClickListener {
                     renaming = !renaming
-                    if (renaming) reordering = false
+                    if (renaming) {
+                        reordering = false
+                        finishReorderAction.visibility = View.GONE
+                    }
                     text = if (renaming) "Terminar de personalizar" else "Personalizar nombres"
                     reorderAction.text = "Reordenar cargadores"
                     settingsDrawer.closeDrawer(GravityCompat.START)
@@ -234,6 +263,7 @@ class MainActivity : AppCompatActivity() {
             renameAction.visibility = View.GONE
             reordering = false
             renaming = false
+            finishReorderAction.visibility = View.GONE
         }
         action.visibility = if (connected) View.GONE else View.VISIBLE
         action.text = "Iniciar sesión con Iberdrola"
@@ -253,6 +283,7 @@ class MainActivity : AppCompatActivity() {
                         this.points = orderStore.ordered(points).toMutableList()
                         reordering = false
                         renaming = false
+                        finishReorderAction.visibility = View.GONE
                         reorderAction.text = "Reordenar cargadores"
                         renameAction.text = "Personalizar nombres"
                         reorderAction.visibility = if (points.isEmpty()) View.GONE else View.VISIBLE
@@ -265,6 +296,7 @@ class MainActivity : AppCompatActivity() {
                         chargerList.removeAllViews()
                         reorderAction.visibility = View.GONE
                         renameAction.visibility = View.GONE
+                        finishReorderAction.visibility = View.GONE
                         "No se han podido actualizar los cargadores: ${it.message}"
                     }
                 )
@@ -338,18 +370,33 @@ class MainActivity : AppCompatActivity() {
                         moveChargePoint(index, index + 1)
                     }, LinearLayout.LayoutParams(dp(38), dp(38)).apply { leftMargin = dp(6) })
                 }, matchWidth().apply { topMargin = dp(12) })
-                if (renaming) addView(Button(context).apply {
-                    text = "Cambiar nombre"
-                    styleCompactButton(this)
-                    setPadding(dp(12), 0, dp(12), 0)
-                    setOnClickListener { renameChargePoint(point) }
-                })
-                if (renaming && nameStore.hasAlias(point)) addView(Button(context).apply {
-                    text = "Eliminar alias"
-                    styleSecondaryButton(this)
-                    setPadding(dp(12), 0, dp(12), 0)
-                    setOnClickListener { removeAlias(point) }
-                }, matchWidth().apply { topMargin = dp(8) })
+                if (renaming) addView(LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(0, dp(16), 0, 0)
+                    addView(TextView(context).apply {
+                        text = "NOMBRE EN ANDROID AUTO"
+                        textSize = 11f
+                        letterSpacing = 0.08f
+                        setTextColor(color(R.color.iberdrola_muted))
+                    })
+                    addView(TextView(context).apply {
+                        text = if (nameStore.hasAlias(point)) "Alias personalizado activo" else "Usando el nombre de Iberdrola"
+                        textSize = 14f
+                        setTextColor(color(R.color.iberdrola_muted))
+                        setPadding(0, dp(4), 0, 0)
+                    })
+                    addView(LinearLayout(context).apply {
+                        gravity = Gravity.CENTER_VERTICAL
+                        orientation = LinearLayout.HORIZONTAL
+                        setPadding(0, dp(12), 0, 0)
+                        addView(aliasAction("Editar nombre", true) { renameChargePoint(point) },
+                            LinearLayout.LayoutParams(0, dp(42), 1f))
+                        if (nameStore.hasAlias(point)) {
+                            addView(aliasAction("Restablecer", false) { removeAlias(point) },
+                                LinearLayout.LayoutParams(0, dp(42), 1f).apply { leftMargin = dp(8) })
+                        }
+                    }, matchWidth())
+                }, matchWidth())
             }, matchWidth().apply { bottomMargin = dp(12) })
         }
     }
@@ -453,6 +500,39 @@ class MainActivity : AppCompatActivity() {
         points.add(to, point)
         orderStore.save(points)
         renderChargePoints()
+        animateReorder(from, to)
+    }
+
+    private fun animateReorder(from: Int, to: Int) {
+        chargerList.post {
+            val shift = dp(68).toFloat()
+            val movingUp = to < from
+
+            chargerList.getChildAt(to)?.apply {
+                translationY = if (movingUp) shift else -shift
+                alpha = 0.72f
+                animate()
+                    .translationY(0f)
+                    .alpha(1f)
+                    .setDuration(240)
+                    .setInterpolator(DecelerateInterpolator())
+                    .start()
+            }
+
+            val firstAffected = minOf(from, to)
+            val lastAffected = maxOf(from, to)
+            for (index in firstAffected..lastAffected) {
+                if (index == to) continue
+                chargerList.getChildAt(index)?.apply {
+                    translationY = if (movingUp) -shift else shift
+                    animate()
+                        .translationY(0f)
+                        .setDuration(220)
+                        .setInterpolator(DecelerateInterpolator())
+                        .start()
+                }
+            }
+        }
     }
 
     private fun renameChargePoint(point: ChargePoint) {
@@ -508,6 +588,20 @@ class MainActivity : AppCompatActivity() {
         if (enabled) setOnClickListener { onClick() }
     }
 
+    private fun aliasAction(label: String, emphasized: Boolean, onClick: () -> Unit): TextView = TextView(this).apply {
+        text = label
+        textSize = 14f
+        gravity = Gravity.CENTER
+        contentDescription = label
+        setTextColor(if (emphasized) Color.WHITE else color(R.color.iberdrola_green_dark))
+        background = if (emphasized) {
+            rounded(color(R.color.iberdrola_green), 12)
+        } else {
+            rounded(Color.TRANSPARENT, 12, color(R.color.iberdrola_green))
+        }
+        setOnClickListener { onClick() }
+    }
+
     private fun stylePrimaryButton(button: Button) = button.apply {
         setTextColor(Color.WHITE)
         background = rounded(color(R.color.iberdrola_green), 16)
@@ -521,8 +615,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun styleDangerButton(button: Button) = button.apply {
-        setTextColor(color(R.color.iberdrola_muted))
-        background = rounded(Color.TRANSPARENT, 16, color(R.color.iberdrola_muted))
+        setTextColor(Color.WHITE)
+        background = rounded(Color.parseColor("#B3261E"), 16)
         minHeight = dp(48)
     }
 
