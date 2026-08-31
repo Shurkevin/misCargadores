@@ -1,0 +1,11 @@
+<resources>
+    <color name="iberdrola_green">#006B4F</color>
+    <color name="iberdrola_green_dark">#003C2D</color>
+    <color name="iberdrola_mint">#DDF5E6</color>
+    <color name="iberdrola_background">#F4F7F5</color>
+    <color name="iberdrola_surface">#FFFFFF</color>
+    <color name="iberdrola_ink">#18221D</color>
+    <color name="iberdrola_muted">#52605A</color>
+    <color name="iberdrola_success">#08763E</color>
+    <color name="iberdrola_warning">#A96B00</color>
+</resources>

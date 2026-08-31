@@ -1,0 +1,18 @@
+<resources>
+    <style name="Theme.IberdrolaAuto" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">@color/iberdrola_green</item>
+        <item name="colorPrimary">@color/iberdrola_green</item>
+        <item name="colorOnPrimary">@color/iberdrola_surface</item>
+        <item name="colorSurface">@color/iberdrola_surface</item>
+        <item name="colorOnSurface">@color/iberdrola_ink</item>
+        <item name="android:statusBarColor">@color/iberdrola_background</item>
+        <item name="android:navigationBarColor">@color/iberdrola_background</item>
+    </style>
+
+    <style name="Theme.IberdrolaAuto.Car">
+        <item name="carColorPrimary">@color/iberdrola_green</item>
+        <item name="carColorPrimaryDark">@color/iberdrola_green_dark</item>
+        <item name="carColorSecondary">@color/iberdrola_mint</item>
+    </style>
+</resources>
