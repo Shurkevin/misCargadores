@@ -1,9 +1,14 @@
 package es.origds.iberdrolaauto
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
+import android.location.Geocoder
+import android.location.LocationManager
+import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
@@ -31,6 +36,8 @@ import es.origds.iberdrolaauto.data.singleAvailableSocketName
 import es.origds.iberdrolaauto.data.ChargePointNameStore
 import es.origds.iberdrolaauto.data.ChargePointOrderStore
 import es.origds.iberdrolaauto.data.IberdrolaReadOnlyRepository
+import es.origds.iberdrolaauto.data.OpenChargeMapRepository
+import java.util.Locale
 import java.util.concurrent.Executors
 
 class MainActivity : AppCompatActivity() {
@@ -43,12 +50,23 @@ class MainActivity : AppCompatActivity() {
     private lateinit var reorderAction: Button
     private lateinit var renameAction: Button
     private lateinit var finishReorderAction: TextView
+    private lateinit var mobileSearchActions: LinearLayout
+    private lateinit var nearbyAction: TextView
+    private lateinit var providerSelector: TextView
+    private lateinit var providerLoginAction: Button
+    private lateinit var providerKeyAction: TextView
     private lateinit var settingsDrawer: DrawerLayout
     private lateinit var orderStore: ChargePointOrderStore
     private lateinit var nameStore: ChargePointNameStore
     private var points: MutableList<ChargePoint> = mutableListOf()
     private var reordering = false
     private var renaming = false
+    private var showingNearby = false
+    private var locationPermissionPending = false
+    private var favoritePoints: MutableList<ChargePoint> = mutableListOf()
+    private val availableProviders = arrayOf("Iberdrola", "Open Charge Map")
+    private val providerPreferences by lazy { getSharedPreferences("providers", MODE_PRIVATE) }
+    private val selectedProviders = linkedSetOf("Iberdrola")
     private val executor = Executors.newSingleThreadExecutor()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -78,6 +96,18 @@ class MainActivity : AppCompatActivity() {
                 },
                 onFailure = { status.text = "No se pudo completar el inicio de sesión: ${it.message}" }
             )
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == LOCATION_PERMISSION_REQUEST && locationPermissionPending) {
+            locationPermissionPending = false
+            if (grantResults.any { it == PackageManager.PERMISSION_GRANTED }) {
+                findNearbyFromPhone()
+            } else {
+                status.text = "Necesitamos permiso de ubicación para buscar cerca de ti."
+            }
         }
     }
 
@@ -145,6 +175,18 @@ class MainActivity : AppCompatActivity() {
                     setPadding(dp(16), dp(14), dp(16), dp(14))
                 }
                 addView(status, matchWidth())
+                mobileSearchActions = LinearLayout(context).apply {
+                    gravity = Gravity.CENTER_VERTICAL
+                    orientation = LinearLayout.HORIZONTAL
+                    setPadding(0, dp(12), 0, 0)
+                    nearbyAction = mobileAction("⌖  Cerca de mí") {
+                        if (showingNearby) showFavorites() else findNearbyFromPhone()
+                    }
+                    addView(nearbyAction, LinearLayout.LayoutParams(0, dp(46), 1f))
+                    addView(mobileAction("⌕  Dirección") { searchNearbyAddress() },
+                        LinearLayout.LayoutParams(0, dp(46), 1f).apply { leftMargin = dp(8) })
+                }
+                addView(mobileSearchActions, matchWidth())
                 chargerList = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
                 addView(chargerList, matchWidth().apply { topMargin = dp(20) })
                 action = Button(context).apply {
@@ -216,6 +258,34 @@ class MainActivity : AppCompatActivity() {
                 setTextColor(color(R.color.iberdrola_muted))
                 setPadding(0, 0, 0, dp(24))
             })
+            addView(TextView(context).apply {
+                text = "PROVEEDOR"
+                textSize = 11f
+                letterSpacing = 0.08f
+                setTextColor(color(R.color.iberdrola_muted))
+            })
+            providerSelector = TextView(context).apply {
+                textSize = 16f
+                gravity = Gravity.CENTER_VERTICAL
+                setTextColor(color(R.color.iberdrola_ink))
+                background = rounded(color(R.color.iberdrola_background), 14, color(R.color.iberdrola_green))
+                setPadding(dp(16), 0, dp(16), 0)
+                setOnClickListener { chooseProvider() }
+            }
+            addView(providerSelector, matchWidth().apply { topMargin = dp(8) })
+            providerLoginAction = Button(context).apply {
+                styleCompactButton(this)
+                setOnClickListener { beginProviderLogin() }
+            }
+            addView(providerLoginAction, matchWidth().apply { topMargin = dp(8); bottomMargin = dp(24) })
+            providerKeyAction = TextView(context).apply {
+                textSize = 14f
+                gravity = Gravity.CENTER_VERTICAL
+                setTextColor(color(R.color.iberdrola_green_dark))
+                setPadding(0, 0, 0, dp(20))
+                setOnClickListener { configureOpenChargeMapKey() }
+            }
+            addView(providerKeyAction, matchWidth())
             reorderAction = Button(context).apply {
                 text = "Reordenar cargadores"
                 visibility = View.GONE
@@ -273,10 +343,102 @@ class MainActivity : AppCompatActivity() {
             reordering = false
             renaming = false
             finishReorderAction.visibility = View.GONE
+            mobileSearchActions.visibility = View.GONE
         }
         action.visibility = if (connected) View.GONE else View.VISIBLE
         action.text = "Iniciar sesión con Iberdrola"
         swipeRefresh.isEnabled = connected
+        refreshProviderControls()
+        if (connected) updateSearchActions()
+    }
+
+    private fun refreshProviderControls() {
+        providerSelector.text = if (selectedProviders.isEmpty()) "Ninguno seleccionado  ›"
+        else "${selectedProviders.joinToString(", ")}  ›"
+        val iberdrolaSelected = "Iberdrola" in selectedProviders
+        providerLoginAction.text = if (!iberdrolaSelected) {
+            "Selecciona Iberdrola para iniciar sesión"
+        } else if (tokenStore.accessToken() == null) {
+            "Iniciar sesión con Iberdrola"
+        } else {
+            "Iberdrola conectado"
+        }
+        providerLoginAction.isEnabled = iberdrolaSelected && tokenStore.accessToken() == null
+        providerLoginAction.alpha = if (providerLoginAction.isEnabled) 1f else 0.65f
+        providerKeyAction.visibility = if ("Open Charge Map" in selectedProviders) View.VISIBLE else View.GONE
+        providerKeyAction.text = if (providerPreferences.getString("ocm_api_key", null).isNullOrBlank()) {
+            "Configurar API key de Open Charge Map"
+        } else {
+            "API key de Open Charge Map configurada"
+        }
+    }
+
+    private fun chooseProvider() {
+        val pending = selectedProviders.toMutableSet()
+        val checked = availableProviders.map { it in pending }.toBooleanArray()
+        AlertDialog.Builder(this)
+            .setTitle("Proveedores activos")
+            .setMultiChoiceItems(availableProviders, checked) { _, which, isChecked ->
+                if (isChecked) pending += availableProviders[which]
+                else pending -= availableProviders[which]
+            }
+            .setPositiveButton("Listo") { _, _ ->
+                selectedProviders.clear()
+                selectedProviders += pending
+                refreshProviderControls()
+            }
+            .setMessage("Podrás activar varios proveedores a la vez cuando estén integrados.")
+            .show()
+    }
+
+    private fun configureOpenChargeMapKey() {
+        if (providerPreferences.getString("ocm_api_key", null).isNullOrBlank()) {
+            showOpenChargeMapTutorial()
+        } else {
+            showOpenChargeMapKeyDialog()
+        }
+    }
+
+    private fun showOpenChargeMapTutorial() {
+        AlertDialog.Builder(this)
+            .setTitle("Configurar Open Charge Map")
+            .setMessage(
+                "Necesitas una API key gratuita para que MisCargadores pueda consultar sus datos.\n\n" +
+                    "1. Crea una cuenta en openchargemap.org.\n" +
+                    "2. Entra en tu perfil y abre My Apps.\n" +
+                    "3. Pulsa Register an Application y crea una aplicación personal.\n" +
+                    "4. Copia la API key y vuelve aquí para pegarla.\n\n" +
+                    "La clave se guarda únicamente en este teléfono."
+            )
+            .setNegativeButton("Cancelar", null)
+            .setNeutralButton("Abrir web") { _, _ ->
+                startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://openchargemap.org/site/develop/api")))
+            }
+            .setPositiveButton("Ya tengo la clave") { _, _ -> showOpenChargeMapKeyDialog() }
+            .show()
+    }
+
+    private fun showOpenChargeMapKeyDialog() {
+        val input = EditText(this).apply {
+            hint = "API key"
+            setSingleLine()
+            setText(providerPreferences.getString("ocm_api_key", ""))
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Open Charge Map")
+            .setMessage("La API key se guarda solo en este teléfono.")
+            .setView(input)
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Guardar") { _, _ ->
+                providerPreferences.edit().putString("ocm_api_key", input.text.toString().trim()).apply()
+                refreshProviderControls()
+            }
+            .show()
+    }
+
+    private fun beginProviderLogin() {
+        if ("Iberdrola" !in selectedProviders) return
+        oauth.begin(AuthSettings()).onFailure { status.text = it.message }
     }
 
     private fun refreshChargePoints() {
@@ -289,15 +451,16 @@ class MainActivity : AppCompatActivity() {
                 swipeRefresh.isRefreshing = false
                 status.text = result.fold(
                     onSuccess = { points ->
-                        this.points = orderStore.ordered(points).toMutableList()
+                        favoritePoints = orderStore.ordered(points).toMutableList()
+                        if (!showingNearby) this.points = favoritePoints.toMutableList()
                         reordering = false
                         renaming = false
                         finishReorderAction.visibility = View.GONE
                         reorderAction.text = "Reordenar cargadores"
                         renameAction.text = "Personalizar nombres"
-                        reorderAction.visibility = if (points.isEmpty()) View.GONE else View.VISIBLE
-                        renameAction.visibility = if (points.isEmpty()) View.GONE else View.VISIBLE
-                        renderChargePoints()
+                        reorderAction.visibility = if (!showingNearby && points.isNotEmpty()) View.VISIBLE else View.GONE
+                        renameAction.visibility = if (!showingNearby && points.isNotEmpty()) View.VISIBLE else View.GONE
+                        if (!showingNearby) renderChargePoints()
                         if (points.isEmpty()) "No se han encontrado favoritos autorizados." else "${points.size} cargadores favoritos."
                     },
                     onFailure = {
@@ -309,6 +472,137 @@ class MainActivity : AppCompatActivity() {
                         "No se han podido actualizar los cargadores: ${it.message}"
                     }
                 )
+            }
+        }
+    }
+
+    private fun updateSearchActions() {
+        mobileSearchActions.visibility = View.VISIBLE
+        nearbyAction.text = if (showingNearby) "←  Favoritos" else "⌖  Cerca de mí"
+    }
+
+    private fun showFavorites() {
+        showingNearby = false
+        reordering = false
+        renaming = false
+        finishReorderAction.visibility = View.GONE
+        reorderAction.visibility = if (favoritePoints.isEmpty()) View.GONE else View.VISIBLE
+        renameAction.visibility = if (favoritePoints.isEmpty()) View.GONE else View.VISIBLE
+        points = favoritePoints.toMutableList()
+        status.text = if (points.isEmpty()) "No se han encontrado favoritos autorizados." else "${points.size} cargadores favoritos."
+        updateSearchActions()
+        renderChargePoints()
+    }
+
+    private fun findNearbyFromPhone() {
+        val fineGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val coarseGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        if (!fineGranted && !coarseGranted) {
+            locationPermissionPending = true
+            requestPermissions(
+                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
+                LOCATION_PERMISSION_REQUEST
+            )
+            return
+        }
+        val locationManager = getSystemService(LocationManager::class.java)
+        val provider = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
+            .firstOrNull { locationManager.isProviderEnabled(it) }
+        if (provider == null) {
+            status.text = "Activa la ubicación del teléfono para buscar cerca de ti."
+            return
+        }
+        status.text = "Obteniendo tu ubicación…"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            locationManager.getCurrentLocation(provider, null, executor) { location ->
+                if (location == null) {
+                    runOnUiThread { status.text = "No se pudo obtener tu ubicación actual." }
+                } else {
+                    searchNearby(location.latitude, location.longitude, "Buscando cargadores disponibles cerca de ti…")
+                }
+            }
+        } else {
+            val location = locationManager.getLastKnownLocation(provider)
+            if (location == null) status.text = "No hay una ubicación reciente disponible."
+            else searchNearby(location.latitude, location.longitude, "Buscando cargadores disponibles cerca de ti…")
+        }
+    }
+
+    private fun searchNearbyAddress() {
+        val input = EditText(this).apply {
+            hint = "Dirección, ciudad o código postal"
+            setSingleLine()
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Buscar por dirección")
+            .setMessage("Mostraremos cargadores disponibles cerca de la ubicación indicada.")
+            .setView(input)
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Buscar") { _, _ ->
+                val query = input.text.toString().trim()
+                if (query.isBlank()) return@setPositiveButton
+                status.text = "Buscando la dirección…"
+                executor.execute {
+                    val location = runCatching {
+                        @Suppress("DEPRECATION")
+                        Geocoder(this, Locale("es", "ES")).getFromLocationName(query, 1)
+                            ?.firstOrNull()
+                    }.getOrNull()
+                    if (location == null) {
+                        runOnUiThread { status.text = "No se encontró esa dirección. Prueba con ciudad y provincia." }
+                    } else {
+                        searchNearby(location.latitude, location.longitude, "Buscando cargadores cerca de la dirección…")
+                    }
+                }
+            }
+            .show()
+    }
+
+    private fun searchNearby(latitude: Double, longitude: Double, loadingMessage: String) {
+        runOnUiThread {
+            showingNearby = true
+            reordering = false
+            renaming = false
+            finishReorderAction.visibility = View.GONE
+            reorderAction.visibility = View.GONE
+            renameAction.visibility = View.GONE
+            points.clear()
+            status.text = loadingMessage
+            updateSearchActions()
+            renderChargePoints()
+        }
+        executor.execute {
+            val token = tokenStore.accessToken()
+            val merged = mutableListOf<ChargePoint>()
+            val errors = mutableListOf<String>()
+            if ("Iberdrola" in selectedProviders) {
+                if (token == null) {
+                    errors += "Inicia sesión en Iberdrola"
+                } else {
+                    runCatching {
+                        IberdrolaReadOnlyRepository(this).nearbyAvailableChargePoints(token, latitude, longitude).availablePoints
+                    }.onSuccess { merged.addAll(it) }.onFailure { errors += "Iberdrola: ${it.message}" }
+                }
+            }
+            if ("Open Charge Map" in selectedProviders) {
+                val key = providerPreferences.getString("ocm_api_key", null).orEmpty()
+                if (key.isBlank()) {
+                    errors += "Configura la API key de Open Charge Map en Ajustes"
+                } else {
+                    runCatching {
+                        OpenChargeMapRepository(this).nearbyChargePoints(key, latitude, longitude)
+                    }.onSuccess { merged.addAll(it) }.onFailure { errors += "Open Charge Map: ${it.message}" }
+                }
+            }
+            val resultPoints = merged.sortedBy { it.distanceKm ?: Double.MAX_VALUE }
+            runOnUiThread {
+                points = resultPoints.toMutableList()
+                status.text = when {
+                    resultPoints.isNotEmpty() -> "${resultPoints.size} cargadores encontrados cerca."
+                    errors.isNotEmpty() -> errors.joinToString(" · ")
+                    else -> "No hay cargadores en esta zona."
+                }
+                renderChargePoints()
             }
         }
     }
@@ -335,11 +629,21 @@ class MainActivity : AppCompatActivity() {
                     setTextColor(color(R.color.iberdrola_muted))
                     setPadding(0, dp(4), 0, 0)
                 })
+                if (showingNearby) point.distanceKm?.let { distance ->
+                    addView(TextView(context).apply {
+                        text = String.format(Locale("es", "ES"), "A %.1f km · %s", distance, point.access)
+                        textSize = 14f
+                        setTextColor(color(R.color.iberdrola_green_dark))
+                        setPadding(0, dp(8), 0, 0)
+                    })
+                }
                 addView(LinearLayout(context).apply {
                     gravity = Gravity.CENTER_VERTICAL
                     orientation = LinearLayout.HORIZONTAL
                     setPadding(0, dp(14), 0, 0)
-                    val availabilityLabel = if (point.availableSockets == 1) {
+                    val availabilityLabel = if (!point.availabilityKnown) {
+                        "Estado no verificado"
+                    } else if (point.availableSockets == 1) {
                         "Disponible"
                     } else if (point.totalSockets == 1) {
                         "No disponible"
@@ -611,6 +915,16 @@ class MainActivity : AppCompatActivity() {
         setOnClickListener { onClick() }
     }
 
+    private fun mobileAction(label: String, onClick: () -> Unit): TextView = TextView(this).apply {
+        text = label
+        textSize = 14f
+        gravity = Gravity.CENTER
+        contentDescription = label
+        setTextColor(color(R.color.iberdrola_green_dark))
+        background = rounded(color(R.color.iberdrola_surface), 14, color(R.color.iberdrola_green))
+        setOnClickListener { onClick() }
+    }
+
     private fun stylePrimaryButton(button: Button) = button.apply {
         setTextColor(Color.WHITE)
         background = rounded(color(R.color.iberdrola_green), 16)
@@ -645,4 +959,8 @@ class MainActivity : AppCompatActivity() {
     private fun matchWidth() = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
     private fun color(id: Int) = ContextCompat.getColor(this, id)
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
+
+    private companion object {
+        const val LOCATION_PERMISSION_REQUEST = 41
+    }
 }

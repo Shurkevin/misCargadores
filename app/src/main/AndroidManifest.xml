@@ -46,7 +46,7 @@
         <service
             android:name=".car.FavoriteChargersCarAppService"
             android:exported="true"
-            android:icon="@mipmap/ic_car_launcher"
+            android:icon="@mipmap/ic_launcher"
             android:label="MisCargadores">
             <intent-filter>
                 <action android:name="androidx.car.app.CarAppService" />

@@ -10,7 +10,9 @@ data class ChargePoint(
     val sockets: List<ChargeSocket>,
     val distanceKm: Double? = null,
     val latitude: Double? = null,
-    val longitude: Double? = null
+    val longitude: Double? = null,
+    val provider: String = "Iberdrola",
+    val availabilityKnown: Boolean = true
 )
 
 data class ChargeSocket(

@@ -3,9 +3,17 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Kept within Android's adaptive-icon safe zone. -->
-    <path android:fillColor="#DFF9ED" android:pathData="M31,23c-5,0 -9,4 -9,9v43c0,5 4,9 9,9h37c5,0 9,-4 9,-9V32c0,-5 -4,-9 -9,-9H31z" />
-    <path android:fillColor="#003C2D" android:pathData="M34,31c-2.2,0 -4,1.8 -4,4v27c0,2.2 1.8,4 4,4h31c2.2,0 4,-1.8 4,-4V35c0,-2.2 -1.8,-4 -4,-4H34z" />
-    <path android:fillColor="#57E39A" android:pathData="M52,34L39,54h11l-2,14 17,-25H54z" />
-    <path android:fillColor="#DFF9ED" android:pathData="M78,37h4c7.2,0 13,5.8 13,13v14c0,8.8 -7.2,16 -16,16h-5v-7h5c4.9,0 9,-4.1 9,-9V50c0,-3.3 -2.7,-6 -6,-6h-4zM43,88h22v5H43z" />
+    <!-- Charging station, cable and plug: deliberately reduced for launcher masks. -->
+    <group
+        android:pivotX="54"
+        android:pivotY="54"
+        android:scaleX="0.82"
+        android:scaleY="0.82">
+    <path android:fillColor="#00000000" android:strokeColor="#F1FFF8" android:strokeWidth="4.5" android:strokeLineJoin="round" android:pathData="M33,23H59Q64,23 64,28V75H28V28Q28,23 33,23Z" />
+    <path android:fillColor="#00000000" android:strokeColor="#F1FFF8" android:strokeWidth="3.5" android:strokeLineJoin="round" android:pathData="M35,31H57V42H35Z" />
+    <path android:fillColor="#58E39A" android:pathData="M48,46L40,59H47L45,70L56,53H49Z" />
+    <path android:fillColor="#00000000" android:strokeColor="#F1FFF8" android:strokeWidth="4.5" android:strokeLineCap="round" android:pathData="M28,75H64" />
+    <path android:fillColor="#00000000" android:strokeColor="#F1FFF8" android:strokeWidth="4" android:strokeLineCap="round" android:pathData="M64,52H68Q77,52 77,61V67Q77,74 84,74Q91,74 91,67V57" />
+    <path android:fillColor="#00000000" android:strokeColor="#F1FFF8" android:strokeWidth="3.5" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M87,57H97V62Q97,67 92,67Q87,67 87,62ZM89,57V49M95,57V49" />
+    </group>
 </vector>
