@@ -1,0 +1,12 @@
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The supplied artwork is 4:3. Constraining its bounds prevents adaptive masks
+         from cropping the circle and the plug, while preserving its proportions. -->
+    <item
+        android:width="86dp"
+        android:height="65dp"
+        android:gravity="center">
+        <bitmap
+            android:gravity="fill"
+            android:src="@drawable/ic_ev_car_source" />
+    </item>
+</layer-list>
