@@ -9,7 +9,11 @@ class ChargePointOrderStore(context: Context) {
 
     fun ordered(points: List<ChargePoint>): List<ChargePoint> {
         val positions = savedIds().withIndex().associate { it.value to it.index }
-        return points.sortedWith(compareBy({ positions[it.id] ?: Int.MAX_VALUE }, { it.name }))
+        return points.sortedWith(
+            compareByDescending<ChargePoint> { it.availableSockets > 0 }
+                .thenBy { positions[it.id] ?: Int.MAX_VALUE }
+                .thenBy { it.name }
+        )
     }
 
     fun save(points: List<ChargePoint>) {

@@ -66,7 +66,7 @@ class MainActivity : AppCompatActivity() {
     private var favoritePoints: MutableList<ChargePoint> = mutableListOf()
     private val availableProviders = arrayOf("Iberdrola", "Open Charge Map")
     private val providerPreferences by lazy { getSharedPreferences("providers", MODE_PRIVATE) }
-    private val selectedProviders = linkedSetOf("Iberdrola")
+    private val selectedProviders = linkedSetOf("Iberdrola", "Open Charge Map")
     private val executor = Executors.newSingleThreadExecutor()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -80,6 +80,14 @@ class MainActivity : AppCompatActivity() {
         oauth = OAuthCoordinator(this, tokenStore)
         orderStore = ChargePointOrderStore(this)
         nameStore = ChargePointNameStore(this)
+        selectedProviders.clear()
+        selectedProviders += providerPreferences
+            .getStringSet("selected_providers", setOf("Iberdrola", "Open Charge Map"))
+            .orEmpty()
+            .filter { it in availableProviders }
+        if (selectedProviders.isEmpty()) selectedProviders += availableProviders
+        // Keep the combined provider view enabled when upgrading from an older build.
+        selectedProviders += availableProviders
         setContentView(content())
         updateState()
         if (tokenStore.accessToken() != null) refreshChargePoints()
@@ -385,9 +393,12 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("Listo") { _, _ ->
                 selectedProviders.clear()
                 selectedProviders += pending
+                providerPreferences.edit()
+                    .putStringSet("selected_providers", selectedProviders.toSet())
+                    .apply()
                 refreshProviderControls()
             }
-            .setMessage("Podrás activar varios proveedores a la vez cuando estén integrados.")
+            .setMessage("Puedes activar varios proveedores a la vez.")
             .show()
     }
 
