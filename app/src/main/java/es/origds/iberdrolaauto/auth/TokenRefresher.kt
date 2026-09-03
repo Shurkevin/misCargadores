@@ -4,7 +4,7 @@ import android.content.Context
 import android.net.Uri
 import net.openid.appauth.AuthorizationService
 import net.openid.appauth.AuthorizationServiceConfiguration
-import net.openid.appauth.RefreshTokenRequest
+import net.openid.appauth.TokenRequest
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** Renews the Iberdrola access token locally when it is close to expiry. */
@@ -34,7 +34,9 @@ class TokenRefresher(context: Context, private val tokenStore: TokenStore) {
             Uri.parse(settings.authorizationEndpoint),
             Uri.parse(settings.tokenEndpoint)
         )
-        val request = RefreshTokenRequest.Builder(configuration, settings.clientId, refreshToken)
+        val request = TokenRequest.Builder(configuration, settings.clientId)
+            .setGrantType("refresh_token")
+            .setRefreshToken(refreshToken)
             .setScope("openid profile email offline_access")
             .setAdditionalParameters(mapOf("audience" to settings.audience))
             .build()
