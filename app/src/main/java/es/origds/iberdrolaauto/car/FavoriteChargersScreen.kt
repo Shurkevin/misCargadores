@@ -22,6 +22,7 @@ import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import es.origds.iberdrolaauto.auth.TokenStore
+import es.origds.iberdrolaauto.auth.TokenRefresher
 import es.origds.iberdrolaauto.data.ChargePoint
 import es.origds.iberdrolaauto.data.ChargePointNameStore
 import es.origds.iberdrolaauto.data.ChargePointOrderStore
@@ -35,6 +36,8 @@ class FavoriteChargersScreen(carContext: CarContext) : Screen(carContext) {
 
     private val executor = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val tokenStore = TokenStore(carContext)
+    private val tokenRefresher = TokenRefresher(carContext, tokenStore)
     private var loading = false
     private var message = "Cargando favoritos…"
     private var chargers: List<ChargePoint> = emptyList()
@@ -45,6 +48,7 @@ class FavoriteChargersScreen(carContext: CarContext) : Screen(carContext) {
         lifecycle.addObserver(object : DefaultLifecycleObserver {
             override fun onDestroy(owner: LifecycleOwner) {
                 executor.shutdownNow()
+                tokenRefresher.dispose()
             }
         })
     }
@@ -250,8 +254,7 @@ class FavoriteChargersScreen(carContext: CarContext) : Screen(carContext) {
     }
 
     private fun loadNearby(location: Location) {
-        val token = TokenStore(carContext).accessToken()
-        if (token == null) {
+        if (tokenStore.accessToken() == null) {
             mainHandler.post {
                 loading = false
                 message = "Inicia sesión en la aplicación del teléfono para buscar cargadores."
@@ -263,23 +266,35 @@ class FavoriteChargersScreen(carContext: CarContext) : Screen(carContext) {
             message = "Buscando cargadores disponibles cerca de ti…"
             invalidateIfActive()
         }
-        val result = runCatching {
-            IberdrolaReadOnlyRepository(carContext).nearbyAvailableChargePoints(token, location.latitude, location.longitude)
-        }
-        mainHandler.post {
-            chargers = result.getOrNull()?.availablePoints.orEmpty()
-            message = result.fold(
-                onSuccess = { search ->
-                    if (search.availablePoints.isNotEmpty()) "" else when {
-                        search.catalogueCount == 0 -> "Iberdrola no devolvió cargadores en unos 2 km."
-                        search.detailCount == 0 -> "Iberdrola devolvió ${search.catalogueCount} puntos, pero sin detalle de tomas."
-                        else -> "Se revisaron ${search.detailCount} cargadores cercanos y ninguno figura disponible."
+        tokenRefresher.refreshIfNeeded { tokenResult ->
+            tokenResult.onFailure {
+                mainHandler.post {
+                    loading = false
+                    message = "La sesión ha caducado. Inicia sesión de nuevo en el teléfono."
+                    invalidateIfActive()
+                }
+            }.onSuccess { token ->
+                executor.execute {
+                    val result = runCatching {
+                        IberdrolaReadOnlyRepository(carContext).nearbyAvailableChargePoints(token, location.latitude, location.longitude)
                     }
-                },
-                onFailure = { "No se pudieron buscar cargadores: ${it.message?.take(120) ?: "error desconocido"}" }
-            )
-            loading = false
-            invalidateIfActive()
+                    mainHandler.post {
+                        chargers = result.getOrNull()?.availablePoints.orEmpty()
+                        message = result.fold(
+                            onSuccess = { search ->
+                                if (search.availablePoints.isNotEmpty()) "" else when {
+                                    search.catalogueCount == 0 -> "Iberdrola no devolvió cargadores en unos 2 km."
+                                    search.detailCount == 0 -> "Iberdrola devolvió ${search.catalogueCount} puntos, pero sin detalle de tomas."
+                                    else -> "Se revisaron ${search.detailCount} cargadores cercanos y ninguno figura disponible."
+                                }
+                            },
+                            onFailure = { "No se pudieron buscar cargadores: ${it.message?.take(120) ?: "error desconocido"}" }
+                        )
+                        loading = false
+                        invalidateIfActive()
+                    }
+                }
+            }
         }
     }
 
@@ -294,25 +309,36 @@ class FavoriteChargersScreen(carContext: CarContext) : Screen(carContext) {
 
     private fun loadIfNeeded() {
         if (loading || chargers.isNotEmpty() || mode == Mode.NEARBY || favoritesLoadAttempted) return
-        val token = TokenStore(carContext).accessToken()
+        val token = tokenStore.accessToken()
         if (token == null) {
             message = "Inicia sesión en la aplicación del teléfono para ver tus favoritos."
             return
         }
         loading = true
-        executor.execute {
-            val result = runCatching {
-                IberdrolaReadOnlyRepository(carContext).authorizedChargePoints(token)
-            }
-            mainHandler.post {
-                chargers = ChargePointOrderStore(carContext).ordered(result.getOrDefault(emptyList()))
-                favoritesLoadAttempted = true
-                message = result.fold(
-                    onSuccess = { if (it.isEmpty()) "No tienes cargadores favoritos." else "" },
-                    onFailure = { "No se pudieron actualizar los favoritos." }
-                )
-                loading = false
-                invalidateIfActive()
+        tokenRefresher.refreshIfNeeded { tokenResult ->
+            tokenResult.onFailure {
+                mainHandler.post {
+                    favoritesLoadAttempted = true
+                    message = "La sesión ha caducado. Inicia sesión de nuevo en el teléfono."
+                    loading = false
+                    invalidateIfActive()
+                }
+            }.onSuccess { freshToken ->
+                executor.execute {
+                    val result = runCatching {
+                        IberdrolaReadOnlyRepository(carContext).authorizedChargePoints(freshToken)
+                    }
+                    mainHandler.post {
+                        chargers = ChargePointOrderStore(carContext).ordered(result.getOrDefault(emptyList()))
+                        favoritesLoadAttempted = true
+                        message = result.fold(
+                            onSuccess = { if (it.isEmpty()) "No tienes cargadores favoritos." else "" },
+                            onFailure = { "No se pudieron actualizar los favoritos." }
+                        )
+                        loading = false
+                        invalidateIfActive()
+                    }
+                }
             }
         }
     }

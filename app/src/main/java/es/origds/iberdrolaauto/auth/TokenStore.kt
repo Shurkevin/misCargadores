@@ -19,14 +19,18 @@ class TokenStore(context: Context) {
     )
 
     fun save(response: TokenResponse) {
-        preferences.edit()
+        val editor = preferences.edit()
             .putString(ACCESS_TOKEN, response.accessToken)
-            .putString(REFRESH_TOKEN, response.refreshToken)
             .putLong(EXPIRES_AT, response.accessTokenExpirationTime ?: 0L)
-            .apply()
+        response.refreshToken?.let { editor.putString(REFRESH_TOKEN, it) }
+        editor.apply()
     }
 
     fun accessToken(): String? = preferences.getString(ACCESS_TOKEN, null)
+
+    fun refreshToken(): String? = preferences.getString(REFRESH_TOKEN, null)
+
+    fun accessTokenExpirationTime(): Long = preferences.getLong(EXPIRES_AT, 0L)
 
     fun clear() = preferences.edit().clear().apply()
 

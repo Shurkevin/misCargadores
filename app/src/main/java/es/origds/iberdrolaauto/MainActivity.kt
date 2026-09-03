@@ -31,6 +31,7 @@ import com.google.android.material.bottomsheet.BottomSheetDialog
 import es.origds.iberdrolaauto.auth.AuthSettings
 import es.origds.iberdrolaauto.auth.OAuthCoordinator
 import es.origds.iberdrolaauto.auth.TokenStore
+import es.origds.iberdrolaauto.auth.TokenRefresher
 import es.origds.iberdrolaauto.data.ChargePoint
 import es.origds.iberdrolaauto.data.singleAvailableSocketName
 import es.origds.iberdrolaauto.data.ChargePointNameStore
@@ -42,6 +43,7 @@ import java.util.concurrent.Executors
 
 class MainActivity : AppCompatActivity() {
     private lateinit var tokenStore: TokenStore
+    private lateinit var tokenRefresher: TokenRefresher
     private lateinit var oauth: OAuthCoordinator
     private lateinit var status: TextView
     private lateinit var action: Button
@@ -77,6 +79,7 @@ class MainActivity : AppCompatActivity() {
             isAppearanceLightNavigationBars = true
         }
         tokenStore = TokenStore(this)
+        tokenRefresher = TokenRefresher(this, tokenStore)
         oauth = OAuthCoordinator(this, tokenStore)
         orderStore = ChargePointOrderStore(this)
         nameStore = ChargePointNameStore(this)
@@ -120,6 +123,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        tokenRefresher.dispose()
         oauth.dispose()
         super.onDestroy()
     }
@@ -453,12 +457,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refreshChargePoints() {
-        val token = tokenStore.accessToken() ?: return
         swipeRefresh.isRefreshing = true
         status.text = "Consultando cargadores autorizados…"
-        executor.execute {
-            val result = runCatching { IberdrolaReadOnlyRepository(this).authorizedChargePoints(token) }
-            runOnUiThread {
+        tokenRefresher.refreshIfNeeded { tokenResult ->
+            tokenResult.onFailure { error ->
+                runOnUiThread {
+                    swipeRefresh.isRefreshing = false
+                    status.text = error.message ?: "La sesión ha caducado. Inicia sesión de nuevo."
+                }
+            }.onSuccess { token ->
+                executor.execute {
+                    val result = runCatching { IberdrolaReadOnlyRepository(this).authorizedChargePoints(token) }
+                    runOnUiThread {
                 swipeRefresh.isRefreshing = false
                 status.text = result.fold(
                     onSuccess = { points ->
@@ -483,6 +493,8 @@ class MainActivity : AppCompatActivity() {
                         "No se han podido actualizar los cargadores: ${it.message}"
                     }
                 )
+                    }
+                }
             }
         }
     }
