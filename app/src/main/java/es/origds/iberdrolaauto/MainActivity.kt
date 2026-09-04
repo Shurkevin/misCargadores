@@ -271,7 +271,7 @@ class MainActivity : AppCompatActivity() {
                 setPadding(0, 0, 0, dp(24))
             })
             addView(TextView(context).apply {
-                text = "PROVEEDOR"
+                text = "PROVEEDORES"
                 textSize = 11f
                 letterSpacing = 0.08f
                 setTextColor(color(R.color.iberdrola_muted))
@@ -279,6 +279,7 @@ class MainActivity : AppCompatActivity() {
             providerSelector = TextView(context).apply {
                 textSize = 16f
                 gravity = Gravity.CENTER_VERTICAL
+                minHeight = dp(48)
                 setTextColor(color(R.color.iberdrola_ink))
                 background = rounded(color(R.color.iberdrola_background), 14, color(R.color.iberdrola_green))
                 setPadding(dp(16), 0, dp(16), 0)
