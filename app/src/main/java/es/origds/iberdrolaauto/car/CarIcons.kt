@@ -7,7 +7,10 @@ import es.origds.iberdrolaauto.R
 
 /** Small, high-contrast assets; the Android Auto host controls their final size. */
 object CarIcons {
-    fun charger(context: Context): CarIcon = icon(context, R.drawable.ic_charger)
+    fun charger(context: Context, available: Boolean = true): CarIcon = icon(
+        context,
+        if (available) R.drawable.ic_charger else R.drawable.ic_charger_unavailable
+    )
 
     fun refresh(context: Context): CarIcon = icon(context, R.drawable.ic_refresh)
 

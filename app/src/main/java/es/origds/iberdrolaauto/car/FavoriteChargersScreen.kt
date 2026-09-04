@@ -85,7 +85,7 @@ class FavoriteChargersScreen(carContext: CarContext) : Screen(carContext) {
                         .apply {
                             charger.distanceKm?.let { addText("A ${"%.1f".format(java.util.Locale("es", "ES"), it)} km") }
                         }
-                        .setImage(CarIcons.charger(carContext))
+                        .setImage(CarIcons.charger(carContext, charger.availableSockets > 0))
                         .setBrowsable(
                             mode != Mode.NEARBY || charger.totalSockets != 1 ||
                                 charger.availableSockets != 1

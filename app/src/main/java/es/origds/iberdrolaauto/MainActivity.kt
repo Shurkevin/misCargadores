@@ -365,8 +365,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refreshProviderControls() {
-        providerSelector.text = if (selectedProviders.isEmpty()) "Ninguno seleccionado  ›"
-        else "${selectedProviders.joinToString(", ")}  ›"
+        providerSelector.text = "Proveedores  ›"
         val iberdrolaSelected = "Iberdrola" in selectedProviders
         providerLoginAction.text = if (!iberdrolaSelected) {
             "Selecciona Iberdrola para iniciar sesión"
@@ -645,6 +644,13 @@ class MainActivity : AppCompatActivity() {
                     text = nameStore.displayName(point)
                     textSize = 19f
                     setTextColor(color(R.color.iberdrola_ink))
+                })
+                addView(TextView(context).apply {
+                    text = point.provider
+                    textSize = 12f
+                    letterSpacing = 0.08f
+                    setTextColor(color(R.color.iberdrola_green_dark))
+                    setPadding(0, dp(5), 0, 0)
                 })
                 addView(TextView(context).apply {
                     text = point.id
