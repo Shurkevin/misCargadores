@@ -23,7 +23,6 @@ import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-import androidx.core.view.GravityCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.drawerlayout.widget.DrawerLayout
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
@@ -49,15 +48,18 @@ class MainActivity : AppCompatActivity() {
     private lateinit var action: Button
     private lateinit var swipeRefresh: SwipeRefreshLayout
     private lateinit var chargerList: LinearLayout
-    private lateinit var reorderAction: Button
-    private lateinit var renameAction: Button
+    private lateinit var reorderAction: LinearLayout
+    private lateinit var renameAction: LinearLayout
+    private lateinit var reorderActionTitle: TextView
+    private lateinit var renameActionTitle: TextView
     private lateinit var finishReorderAction: TextView
     private lateinit var mobileSearchActions: LinearLayout
     private lateinit var nearbyAction: TextView
-    private lateinit var providerSelector: TextView
-    private lateinit var providerLoginAction: Button
-    private lateinit var providerKeyAction: TextView
-    private lateinit var settingsDrawer: DrawerLayout
+    private lateinit var providerLoginAction: LinearLayout
+    private lateinit var providerKeyAction: LinearLayout
+    private lateinit var providerLoginStatus: TextView
+    private lateinit var providerKeyStatus: TextView
+    private var settingsDialog: BottomSheetDialog? = null
     private lateinit var orderStore: ChargePointOrderStore
     private lateinit var nameStore: ChargePointNameStore
     private var points: MutableList<ChargePoint> = mutableListOf()
@@ -66,9 +68,7 @@ class MainActivity : AppCompatActivity() {
     private var showingNearby = false
     private var locationPermissionPending = false
     private var favoritePoints: MutableList<ChargePoint> = mutableListOf()
-    private val availableProviders = arrayOf("Iberdrola", "Open Charge Map")
     private val providerPreferences by lazy { getSharedPreferences("providers", MODE_PRIVATE) }
-    private val selectedProviders = linkedSetOf("Iberdrola", "Open Charge Map")
     private val executor = Executors.newSingleThreadExecutor()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -83,14 +83,6 @@ class MainActivity : AppCompatActivity() {
         oauth = OAuthCoordinator(this, tokenStore)
         orderStore = ChargePointOrderStore(this)
         nameStore = ChargePointNameStore(this)
-        selectedProviders.clear()
-        selectedProviders += providerPreferences
-            .getStringSet("selected_providers", setOf("Iberdrola", "Open Charge Map"))
-            .orEmpty()
-            .filter { it in availableProviders }
-        if (selectedProviders.isEmpty()) selectedProviders += availableProviders
-        // Keep the combined provider view enabled when upgrading from an older build.
-        selectedProviders += availableProviders
         setContentView(content())
         updateState()
         if (tokenStore.accessToken() != null) refreshChargePoints()
@@ -129,9 +121,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun content(): DrawerLayout = DrawerLayout(this).apply {
-        settingsDrawer = this
         setBackgroundColor(color(R.color.iberdrola_background))
-        val drawer = this
         addView(FrameLayout(context).apply {
         addView(SwipeRefreshLayout(context).apply {
             swipeRefresh = this
@@ -149,7 +139,7 @@ class MainActivity : AppCompatActivity() {
                     background = rounded(color(R.color.iberdrola_green_dark), 28)
                     setPadding(dp(20), dp(20), dp(20), dp(20))
                     addView(Button(context).apply {
-                        text = "☰"
+                        text = "⚙"
                         textSize = 21f
                         setTextColor(Color.WHITE)
                         background = rounded(Color.TRANSPARENT, 18)
@@ -157,7 +147,7 @@ class MainActivity : AppCompatActivity() {
                         minHeight = dp(40)
                         setPadding(0, 0, 0, 0)
                         contentDescription = "Abrir ajustes"
-                        setOnClickListener { drawer.openDrawer(GravityCompat.START) }
+                        setOnClickListener { showSettingsWindow() }
                     }, LinearLayout.LayoutParams(dp(40), dp(40)).apply {
                         rightMargin = dp(16)
                     })
@@ -224,7 +214,7 @@ class MainActivity : AppCompatActivity() {
             visibility = View.GONE
             setOnClickListener {
                 reordering = false
-                reorderAction.text = "Reordenar cargadores"
+                reorderActionTitle.text = "Ordenar cargadores"
                 visibility = View.GONE
                 status.text = "Orden guardado."
                 status.setTextColor(color(R.color.iberdrola_muted))
@@ -244,102 +234,256 @@ class MainActivity : AppCompatActivity() {
             bottomMargin = dp(28)
         })
         }, DrawerLayout.LayoutParams(DrawerLayout.LayoutParams.MATCH_PARENT, DrawerLayout.LayoutParams.MATCH_PARENT))
-        addView(settingsPanel(), DrawerLayout.LayoutParams(dp(320), DrawerLayout.LayoutParams.MATCH_PARENT, GravityCompat.START))
+        // Build the panel once so its controls are initialized; it is opened as a standalone window.
+        settingsPanel()
+    }
+
+    private fun showSettingsWindow() {
+        if (settingsDialog?.isShowing == true) return
+        settingsDialog = BottomSheetDialog(this, R.style.Theme_IberdrolaAuto_BottomSheet).apply {
+            setContentView(settingsPanel())
+            setOnDismissListener { settingsDialog = null }
+            setOnShowListener {
+                findViewById<FrameLayout>(com.google.android.material.R.id.design_bottom_sheet)
+                    ?.apply {
+                        background = ColorDrawable(Color.TRANSPARENT)
+                        setPadding(0, 0, 0, 0)
+                        layoutParams.width = LinearLayout.LayoutParams.MATCH_PARENT
+                    }
+                window?.apply {
+                    setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+                    WindowInsetsControllerCompat(this, decorView).isAppearanceLightNavigationBars = false
+                }
+                refreshProviderControls()
+                refreshSettingsActions()
+            }
+            show()
+        }
+    }
+
+    private fun closeSettings() {
+        settingsDialog?.dismiss()
+    }
+
+    private data class ProviderRow(val container: LinearLayout, val status: TextView)
+    private data class SettingRow(val container: LinearLayout, val title: TextView)
+
+    private fun providerRow(monogram: String, title: String, detail: String): ProviderRow {
+        val status = TextView(this).apply {
+            textSize = 12f
+            gravity = Gravity.CENTER_VERTICAL
+            setTextColor(color(R.color.iberdrola_success))
+        }
+        val row = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            orientation = LinearLayout.HORIZONTAL
+            minimumHeight = dp(62)
+            isClickable = true
+            isFocusable = true
+            addView(TextView(context).apply {
+                text = monogram
+                textSize = if (monogram.length > 1) 9f else 16f
+                gravity = Gravity.CENTER
+                setTextColor(color(R.color.iberdrola_success))
+                background = rounded(color(R.color.iberdrola_mint), 99)
+            }, LinearLayout.LayoutParams(dp(34), dp(34)).apply { rightMargin = dp(11) })
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(TextView(context).apply {
+                    text = title
+                    textSize = 15f
+                    setTextColor(color(R.color.iberdrola_ink))
+                })
+                addView(TextView(context).apply {
+                    text = detail
+                    textSize = 12f
+                    setTextColor(color(R.color.iberdrola_muted))
+                    setPadding(0, dp(2), 0, 0)
+                })
+            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(status, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(36)))
+            addView(TextView(context).apply {
+                text = "›"
+                textSize = 24f
+                gravity = Gravity.CENTER
+                setTextColor(color(R.color.iberdrola_muted))
+            }, LinearLayout.LayoutParams(dp(18), dp(36)))
+        }
+        return ProviderRow(row, status)
+    }
+
+    private fun settingRow(icon: String, label: String, detail: String): SettingRow {
+        val title = TextView(this).apply {
+            text = label
+            textSize = 15f
+            setTextColor(color(R.color.iberdrola_ink))
+        }
+        val row = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            orientation = LinearLayout.HORIZONTAL
+            minimumHeight = dp(64)
+            isClickable = true
+            isFocusable = true
+            addView(TextView(context).apply {
+                text = icon
+                textSize = 22f
+                gravity = Gravity.CENTER
+                setTextColor(color(R.color.iberdrola_green_dark))
+            }, LinearLayout.LayoutParams(dp(38), dp(42)).apply { rightMargin = dp(5) })
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(title)
+                addView(TextView(context).apply {
+                    text = detail
+                    textSize = 12f
+                    setTextColor(color(R.color.iberdrola_muted))
+                    setPadding(0, dp(2), 0, 0)
+                })
+            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(TextView(context).apply {
+                text = "›"
+                textSize = 24f
+                gravity = Gravity.CENTER
+                setTextColor(color(R.color.iberdrola_muted))
+            }, LinearLayout.LayoutParams(dp(22), dp(42)))
+        }
+        return SettingRow(row, title)
+    }
+
+    private fun refreshSettingsActions() {
+        if (!::reorderAction.isInitialized || !::renameAction.isInitialized) return
+        val enabled = favoritePoints.isNotEmpty()
+        listOf(reorderAction, renameAction).forEach {
+            it.visibility = View.VISIBLE
+            it.isEnabled = enabled
+            it.alpha = if (enabled) 1f else 0.5f
+        }
     }
 
     private fun settingsPanel(): ScrollView = ScrollView(this).apply {
-        setBackgroundColor(color(R.color.iberdrola_surface))
+        setBackgroundColor(Color.TRANSPARENT)
         addView(LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(24), dp(72), dp(24), dp(28))
-            addView(TextView(context).apply {
-                text = "AJUSTES"
-                textSize = 12f
-                letterSpacing = 0.12f
-                setTextColor(color(R.color.iberdrola_green))
-            })
-            addView(TextView(context).apply {
-                text = "Personaliza tu lista"
-                textSize = 26f
-                setTextColor(color(R.color.iberdrola_ink))
-                setPadding(0, dp(8), 0, dp(8))
-            })
-            addView(TextView(context).apply {
-                text = "Los cambios se guardan en este teléfono y se reflejan en Android Auto."
-                textSize = 15f
-                setTextColor(color(R.color.iberdrola_muted))
-                setPadding(0, 0, 0, dp(24))
-            })
-            addView(TextView(context).apply {
-                text = "PROVEEDORES"
+            background = roundedTop(color(R.color.iberdrola_surface), 28)
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(22), dp(12), dp(22), dp(16))
+                addView(View(context).apply {
+                background = rounded(Color.parseColor("#D6DFD9"), 99)
+                }, LinearLayout.LayoutParams(dp(38), dp(4)).apply {
+                    gravity = Gravity.CENTER_HORIZONTAL
+                    bottomMargin = dp(20)
+                })
+                addView(LinearLayout(context).apply {
+                gravity = Gravity.TOP
+                orientation = LinearLayout.HORIZONTAL
+                addView(TextView(context).apply {
+                    text = "☷"
+                    textSize = 22f
+                    gravity = Gravity.CENTER
+                    setTextColor(color(R.color.iberdrola_success))
+                    background = rounded(color(R.color.iberdrola_mint), 12)
+                }, LinearLayout.LayoutParams(dp(40), dp(40)).apply { rightMargin = dp(12) })
+                addView(LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(TextView(context).apply {
+                        text = "Ajustes"
+                        textSize = 24f
+                        setTextColor(color(R.color.iberdrola_ink))
+                    })
+                    addView(TextView(context).apply {
+                        text = "Personaliza cómo ves tus cargadores."
+                        textSize = 14f
+                        setTextColor(color(R.color.iberdrola_muted))
+                        setPadding(0, dp(4), 0, 0)
+                    })
+                }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                }, matchWidth().apply { bottomMargin = dp(24) })
+                addView(TextView(context).apply {
+                text = "FUENTES DE DATOS"
                 textSize = 11f
                 letterSpacing = 0.08f
                 setTextColor(color(R.color.iberdrola_muted))
-            })
-            providerSelector = TextView(context).apply {
-                textSize = 16f
-                gravity = Gravity.CENTER_VERTICAL
-                minHeight = dp(48)
-                setTextColor(color(R.color.iberdrola_ink))
-                background = rounded(color(R.color.iberdrola_background), 14, color(R.color.iberdrola_green))
-                setPadding(dp(16), 0, dp(16), 0)
-                setOnClickListener { chooseProvider() }
-            }
-            addView(providerSelector, matchWidth().apply { topMargin = dp(8) })
-            providerLoginAction = Button(context).apply {
-                styleCompactButton(this)
-                setOnClickListener { beginProviderLogin() }
-            }
-            addView(providerLoginAction, matchWidth().apply { topMargin = dp(8); bottomMargin = dp(24) })
-            providerKeyAction = TextView(context).apply {
-                textSize = 14f
-                gravity = Gravity.CENTER_VERTICAL
-                setTextColor(color(R.color.iberdrola_green_dark))
-                setPadding(0, 0, 0, dp(20))
-                setOnClickListener { configureOpenChargeMapKey() }
-            }
-            addView(providerKeyAction, matchWidth())
-            reorderAction = Button(context).apply {
-                text = "Reordenar cargadores"
-                visibility = View.GONE
-                styleSecondaryButton(this)
-                setOnClickListener {
+                }, matchWidth().apply { bottomMargin = dp(8) })
+                addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                background = rounded(color(R.color.iberdrola_background), 16)
+                setPadding(dp(12), dp(2), dp(12), dp(2))
+                providerRow("I", "Iberdrola", "Tu cuenta de movilidad").also { row ->
+                    providerLoginAction = row.container
+                    providerLoginStatus = row.status
+                    row.container.setOnClickListener { beginProviderLogin() }
+                    addView(row.container, matchWidth())
+                }
+                addView(View(context).apply { setBackgroundColor(Color.parseColor("#E4EBE6")) }, matchWidth().apply { height = dp(1) })
+                providerRow("OCM", "Open Charge Map", "Datos de carga pública").also { row ->
+                    providerKeyAction = row.container
+                    providerKeyStatus = row.status
+                    row.container.setOnClickListener { configureOpenChargeMapKey() }
+                    addView(row.container, matchWidth())
+                }
+                }, matchWidth().apply { bottomMargin = dp(20) })
+                addView(TextView(context).apply {
+                text = "PREFERENCIAS"
+                textSize = 11f
+                letterSpacing = 0.08f
+                setTextColor(color(R.color.iberdrola_muted))
+                }, matchWidth().apply { bottomMargin = dp(6) })
+                settingRow("↕", "Ordenar cargadores", "Elige el orden de tu lista").also { row ->
+                reorderAction = row.container
+                reorderActionTitle = row.title
+                row.container.setOnClickListener {
                     reordering = !reordering
                     if (reordering) renaming = false
-                    text = if (reordering) "Terminar de ordenar" else "Reordenar cargadores"
-                    renameAction.text = "Personalizar nombres"
+                    reorderActionTitle.text = if (reordering) "Terminar de ordenar" else "Ordenar cargadores"
+                    renameActionTitle.text = "Personalizar nombres"
                     finishReorderAction.visibility = if (reordering) View.VISIBLE else View.GONE
-                    settingsDrawer.closeDrawer(GravityCompat.START)
+                    closeSettings()
                     renderChargePoints()
                 }
-            }
-            addView(reorderAction, matchWidth())
-            renameAction = Button(context).apply {
-                text = "Personalizar nombres"
-                visibility = View.GONE
-                styleSecondaryButton(this)
-                setOnClickListener {
+                addView(row.container, matchWidth())
+                }
+                addView(View(context).apply { setBackgroundColor(Color.parseColor("#E4EBE6")) }, matchWidth().apply { height = dp(1) })
+                settingRow("✎", "Personalizar nombres", "Identifica tus lugares habituales").also { row ->
+                renameAction = row.container
+                renameActionTitle = row.title
+                row.container.setOnClickListener {
                     renaming = !renaming
                     if (renaming) {
                         reordering = false
                         finishReorderAction.visibility = View.GONE
                     }
-                    text = if (renaming) "Terminar de personalizar" else "Personalizar nombres"
-                    reorderAction.text = "Reordenar cargadores"
-                    settingsDrawer.closeDrawer(GravityCompat.START)
+                    renameActionTitle.text = if (renaming) "Terminar de personalizar" else "Personalizar nombres"
+                    reorderActionTitle.text = "Ordenar cargadores"
+                    closeSettings()
                     renderChargePoints()
                 }
-            }
-            addView(renameAction, matchWidth().apply { topMargin = dp(8) })
-            addView(View(context).apply { setBackgroundColor(Color.parseColor("#DFE6E1")) }, matchWidth().apply { topMargin = dp(24); bottomMargin = dp(16); height = dp(1) })
-            addView(Button(context).apply {
-                text = "Cerrar sesión y borrar datos"
-                styleDangerButton(this)
-                setOnClickListener {
-                    tokenStore.clear()
-                    settingsDrawer.closeDrawer(GravityCompat.START)
-                    updateState()
+                addView(row.container, matchWidth())
                 }
+            }, matchWidth())
+            addView(LinearLayout(context).apply {
+                gravity = Gravity.CENTER_VERTICAL
+                background = ColorDrawable(Color.parseColor("#B63832"))
+                setPadding(dp(22), dp(11), dp(22), dp(20))
+                addView(TextView(context).apply {
+                    text = "↪  Cerrar sesión"
+                    textSize = 15f
+                    gravity = Gravity.CENTER_VERTICAL
+                    minHeight = dp(46)
+                    setTextColor(Color.WHITE)
+                    setOnClickListener {
+                        AlertDialog.Builder(this@MainActivity)
+                            .setTitle("Cerrar sesión")
+                            .setMessage("Tendrás que iniciar sesión de nuevo para consultar tus cargadores de Iberdrola.")
+                            .setNegativeButton("Cancelar", null)
+                            .setPositiveButton("Cerrar sesión") { _, _ ->
+                                tokenStore.clear()
+                                closeSettings()
+                                updateState()
+                            }
+                            .show()
+                    }
+                }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
             }, matchWidth())
         })
     }
@@ -350,9 +494,8 @@ class MainActivity : AppCompatActivity() {
         if (!connected) status.text = "Aún no hay sesión. El inicio de sesión se abrirá en el navegador de Iberdrola cuando tengamos una configuración OAuth autorizada."
         if (!connected) {
             points.clear()
+            favoritePoints.clear()
             chargerList.removeAllViews()
-            reorderAction.visibility = View.GONE
-            renameAction.visibility = View.GONE
             reordering = false
             renaming = false
             finishReorderAction.visibility = View.GONE
@@ -362,48 +505,21 @@ class MainActivity : AppCompatActivity() {
         action.text = "Iniciar sesión con Iberdrola"
         swipeRefresh.isEnabled = connected
         refreshProviderControls()
+        refreshSettingsActions()
         if (connected) updateSearchActions()
     }
 
     private fun refreshProviderControls() {
-        providerSelector.text = "Proveedores  ›"
-        val iberdrolaSelected = "Iberdrola" in selectedProviders
-        providerLoginAction.text = if (!iberdrolaSelected) {
-            "Selecciona Iberdrola para iniciar sesión"
-        } else if (tokenStore.accessToken() == null) {
-            "Iniciar sesión con Iberdrola"
-        } else {
-            "Iberdrola conectado"
-        }
-        providerLoginAction.isEnabled = iberdrolaSelected && tokenStore.accessToken() == null
-        providerLoginAction.alpha = if (providerLoginAction.isEnabled) 1f else 0.65f
-        providerKeyAction.visibility = if ("Open Charge Map" in selectedProviders) View.VISIBLE else View.GONE
-        providerKeyAction.text = if (providerPreferences.getString("ocm_api_key", null).isNullOrBlank()) {
-            "Configurar API key de Open Charge Map"
-        } else {
-            "API key de Open Charge Map configurada"
-        }
-    }
+        val iberdrolaConfigured = tokenStore.accessToken() != null
+        val openChargeMapConfigured = !providerPreferences.getString("ocm_api_key", null).isNullOrBlank()
 
-    private fun chooseProvider() {
-        val pending = selectedProviders.toMutableSet()
-        val checked = availableProviders.map { it in pending }.toBooleanArray()
-        AlertDialog.Builder(this)
-            .setTitle("Proveedores activos")
-            .setMultiChoiceItems(availableProviders, checked) { _, which, isChecked ->
-                if (isChecked) pending += availableProviders[which]
-                else pending -= availableProviders[which]
-            }
-            .setPositiveButton("Listo") { _, _ ->
-                selectedProviders.clear()
-                selectedProviders += pending
-                providerPreferences.edit()
-                    .putStringSet("selected_providers", selectedProviders.toSet())
-                    .apply()
-                refreshProviderControls()
-            }
-            .setMessage("Puedes activar varios proveedores a la vez.")
-            .show()
+        providerLoginStatus.text = if (iberdrolaConfigured) "Conectado" else "Conectar"
+        providerLoginStatus.setTextColor(if (iberdrolaConfigured) color(R.color.iberdrola_success) else color(R.color.iberdrola_green_dark))
+        providerLoginAction.isEnabled = !iberdrolaConfigured
+        providerLoginAction.alpha = 1f
+
+        providerKeyStatus.text = if (openChargeMapConfigured) "Configurada" else "Añadir clave"
+        providerKeyStatus.setTextColor(if (openChargeMapConfigured) color(R.color.iberdrola_success) else color(R.color.iberdrola_green_dark))
     }
 
     private fun configureOpenChargeMapKey() {
@@ -452,7 +568,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun beginProviderLogin() {
-        if ("Iberdrola" !in selectedProviders) return
         oauth.begin(AuthSettings()).onFailure { status.text = it.message }
     }
 
@@ -477,18 +592,16 @@ class MainActivity : AppCompatActivity() {
                         reordering = false
                         renaming = false
                         finishReorderAction.visibility = View.GONE
-                        reorderAction.text = "Reordenar cargadores"
-                        renameAction.text = "Personalizar nombres"
-                        reorderAction.visibility = if (!showingNearby && points.isNotEmpty()) View.VISIBLE else View.GONE
-                        renameAction.visibility = if (!showingNearby && points.isNotEmpty()) View.VISIBLE else View.GONE
+                        reorderActionTitle.text = "Ordenar cargadores"
+                        renameActionTitle.text = "Personalizar nombres"
+                        refreshSettingsActions()
                         if (!showingNearby) renderChargePoints()
                         if (points.isEmpty()) "No se han encontrado favoritos autorizados." else "${points.size} cargadores favoritos."
                     },
                     onFailure = {
                         this.points.clear()
                         chargerList.removeAllViews()
-                        reorderAction.visibility = View.GONE
-                        renameAction.visibility = View.GONE
+                        refreshSettingsActions()
                         finishReorderAction.visibility = View.GONE
                         "No se han podido actualizar los cargadores: ${it.message}"
                     }
@@ -509,8 +622,7 @@ class MainActivity : AppCompatActivity() {
         reordering = false
         renaming = false
         finishReorderAction.visibility = View.GONE
-        reorderAction.visibility = if (favoritePoints.isEmpty()) View.GONE else View.VISIBLE
-        renameAction.visibility = if (favoritePoints.isEmpty()) View.GONE else View.VISIBLE
+        refreshSettingsActions()
         points = favoritePoints.toMutableList()
         status.text = if (points.isEmpty()) "No se han encontrado favoritos autorizados." else "${points.size} cargadores favoritos."
         updateSearchActions()
@@ -552,23 +664,36 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun searchNearbyAddress() {
+        val dialog = BottomSheetDialog(this, R.style.Theme_IberdrolaAuto_BottomSheet)
         val input = EditText(this).apply {
             hint = "Dirección, ciudad o código postal"
             setSingleLine()
+            textSize = 16f
+            setTextColor(color(R.color.iberdrola_ink))
+            setHintTextColor(color(R.color.iberdrola_muted))
+            background = rounded(color(R.color.iberdrola_background), 16, color(R.color.iberdrola_green))
+            setPadding(dp(16), 0, dp(16), 0)
         }
-        AlertDialog.Builder(this)
-            .setTitle("Buscar por dirección")
-            .setMessage("Mostraremos cargadores disponibles cerca de la ubicación indicada.")
-            .setView(input)
-            .setNegativeButton("Cancelar", null)
-            .setPositiveButton("Buscar") { _, _ ->
+        val searchAction = TextView(this).apply {
+            text = "Buscar"
+            textSize = 15f
+            gravity = Gravity.CENTER
+            minHeight = dp(48)
+            setTextColor(Color.WHITE)
+            background = rounded(color(R.color.iberdrola_green), 16)
+            setPadding(dp(20), 0, dp(20), 0)
+            setOnClickListener {
                 val query = input.text.toString().trim()
-                if (query.isBlank()) return@setPositiveButton
+                if (query.isBlank()) {
+                    input.error = "Escribe una dirección, ciudad o código postal"
+                    return@setOnClickListener
+                }
+                dialog.dismiss()
                 status.text = "Buscando la dirección…"
                 executor.execute {
                     val location = runCatching {
                         @Suppress("DEPRECATION")
-                        Geocoder(this, Locale("es", "ES")).getFromLocationName(query, 1)
+                        Geocoder(this@MainActivity, Locale("es", "ES")).getFromLocationName(query, 1)
                             ?.firstOrNull()
                     }.getOrNull()
                     if (location == null) {
@@ -578,7 +703,67 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
-            .show()
+        }
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = roundedTop(color(R.color.iberdrola_surface), 28)
+            setPadding(dp(22), dp(12), dp(22), dp(24))
+            addView(View(context).apply {
+                background = rounded(Color.parseColor("#D6DFD9"), 99)
+            }, LinearLayout.LayoutParams(dp(38), dp(4)).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+                bottomMargin = dp(20)
+            })
+            addView(LinearLayout(context).apply {
+                gravity = Gravity.TOP
+                orientation = LinearLayout.HORIZONTAL
+                addView(TextView(context).apply {
+                    text = "⌕"
+                    textSize = 22f
+                    gravity = Gravity.CENTER
+                    setTextColor(color(R.color.iberdrola_success))
+                    background = rounded(color(R.color.iberdrola_mint), 12)
+                }, LinearLayout.LayoutParams(dp(40), dp(40)).apply { rightMargin = dp(12) })
+                addView(LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(TextView(context).apply {
+                        text = "Buscar por dirección"
+                        textSize = 23f
+                        setTextColor(color(R.color.iberdrola_ink))
+                    })
+                    addView(TextView(context).apply {
+                        text = "Te mostraremos cargadores disponibles cerca de la ubicación indicada."
+                        textSize = 14f
+                        setTextColor(color(R.color.iberdrola_muted))
+                        setPadding(0, dp(5), 0, 0)
+                    })
+                }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            }, matchWidth().apply { bottomMargin = dp(22) })
+            addView(input, matchWidth().apply { height = dp(54); bottomMargin = dp(22) })
+            addView(LinearLayout(context).apply {
+                gravity = Gravity.CENTER_VERTICAL or Gravity.END
+                addView(TextView(context).apply {
+                    text = "Cancelar"
+                    textSize = 15f
+                    gravity = Gravity.CENTER
+                    minHeight = dp(48)
+                    setTextColor(color(R.color.iberdrola_green_dark))
+                    setPadding(dp(16), 0, dp(16), 0)
+                    setOnClickListener { dialog.dismiss() }
+                })
+                addView(searchAction)
+            }, matchWidth())
+        }
+        dialog.setContentView(content)
+        dialog.setOnShowListener {
+            dialog.findViewById<FrameLayout>(com.google.android.material.R.id.design_bottom_sheet)
+                ?.background = ColorDrawable(Color.TRANSPARENT)
+            dialog.window?.apply {
+                setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+                WindowInsetsControllerCompat(this, decorView).isAppearanceLightNavigationBars = true
+            }
+        }
+        dialog.show()
     }
 
     private fun searchNearby(latitude: Double, longitude: Double, loadingMessage: String) {
@@ -587,8 +772,6 @@ class MainActivity : AppCompatActivity() {
             reordering = false
             renaming = false
             finishReorderAction.visibility = View.GONE
-            reorderAction.visibility = View.GONE
-            renameAction.visibility = View.GONE
             points.clear()
             status.text = loadingMessage
             updateSearchActions()
@@ -598,24 +781,20 @@ class MainActivity : AppCompatActivity() {
             val token = tokenStore.accessToken()
             val merged = mutableListOf<ChargePoint>()
             val errors = mutableListOf<String>()
-            if ("Iberdrola" in selectedProviders) {
-                if (token == null) {
-                    errors += "Inicia sesión en Iberdrola"
-                } else {
-                    runCatching {
-                        IberdrolaReadOnlyRepository(this).nearbyAvailableChargePoints(token, latitude, longitude).availablePoints
-                    }.onSuccess { merged.addAll(it) }.onFailure { errors += "Iberdrola: ${it.message}" }
-                }
+            if (token == null) {
+                errors += "Inicia sesión en Iberdrola"
+            } else {
+                runCatching {
+                    IberdrolaReadOnlyRepository(this).nearbyAvailableChargePoints(token, latitude, longitude).availablePoints
+                }.onSuccess { merged.addAll(it) }.onFailure { errors += "Iberdrola: ${it.message}" }
             }
-            if ("Open Charge Map" in selectedProviders) {
-                val key = providerPreferences.getString("ocm_api_key", null).orEmpty()
-                if (key.isBlank()) {
-                    errors += "Configura la API key de Open Charge Map en Ajustes"
-                } else {
-                    runCatching {
-                        OpenChargeMapRepository(this).nearbyChargePoints(key, latitude, longitude)
-                    }.onSuccess { merged.addAll(it) }.onFailure { errors += "Open Charge Map: ${it.message}" }
-                }
+            val key = providerPreferences.getString("ocm_api_key", null).orEmpty()
+            if (key.isBlank()) {
+                errors += "Configura la API key de Open Charge Map en Ajustes"
+            } else {
+                runCatching {
+                    OpenChargeMapRepository(this).nearbyChargePoints(key, latitude, longitude)
+                }.onSuccess { merged.addAll(it) }.onFailure { errors += "Open Charge Map: ${it.message}" }
             }
             val resultPoints = merged.sortedBy { it.distanceKm ?: Double.MAX_VALUE }
             runOnUiThread {
@@ -984,6 +1163,13 @@ class MainActivity : AppCompatActivity() {
         cornerRadius = dp(radiusDp).toFloat()
         setColor(background)
         stroke?.let { setStroke(dp(1), it) }
+    }
+
+    private fun roundedTop(background: Int, radiusDp: Int) = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        val radius = dp(radiusDp).toFloat()
+        cornerRadii = floatArrayOf(radius, radius, radius, radius, 0f, 0f, 0f, 0f)
+        setColor(background)
     }
 
     private fun matchWidth() = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
